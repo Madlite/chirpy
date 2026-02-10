@@ -33,6 +33,7 @@ func main() {
 
 	mux.HandleFunc("GET /admin/metrics", apiCfg.getHits)
 	mux.HandleFunc("POST /admin/reset", apiCfg.resetHits)
+	mux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
 
 	server.ListenAndServe()
 }
@@ -56,4 +57,38 @@ func (api *apiConfig) resetHits(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
+}
+
+func handlerValidateChirp(w http.ResponseWriter, r *http.Request) http.Handler {
+	type chirp struct {
+        Text string `json:"text"`
+    }
+
+    decoder := json.NewDecoder(r.Body)
+	chirp := chirp{}
+    err := decoder.Decode(&chirp)
+	body :=  `{"error" : "Something went wrong"}`
+    if err != nil {
+		respondWithError(w, 500, err)
+    }
+
+	body =  `{"error" : "Chirp is to long"}`
+	if len(chirp) > 140 {
+		respondWithError(w, 400, body)
+	}
+	body =  `{"valid": true}`
+	respondWithJSON(w, 200, body)
+}
+
+
+respondWithError(w http.ResponseWriter, code int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	w.Write([]byte(msg))
+}
+
+respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	w.Write([]byte(msg))
 }
