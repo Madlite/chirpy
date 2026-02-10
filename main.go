@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync/atomic"
@@ -31,7 +32,7 @@ func main() {
 		w.Write([]byte("OK"))
 	})
 
-	mux.HandleFunc("GET /admin/metrics", apiCfg.getHits)
+	mux.HandleFunc("GET  /admin/metrics", apiCfg.getHits)
 	mux.HandleFunc("POST /admin/reset", apiCfg.resetHits)
 	mux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
 
@@ -59,36 +60,40 @@ func (api *apiConfig) resetHits(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK"))
 }
 
-func handlerValidateChirp(w http.ResponseWriter, r *http.Request) http.Handler {
-	type chirp struct {
-        Text string `json:"text"`
-    }
-
-    decoder := json.NewDecoder(r.Body)
-	chirp := chirp{}
-    err := decoder.Decode(&chirp)
-	body :=  `{"error" : "Something went wrong"}`
-    if err != nil {
-		respondWithError(w, 500, err)
-    }
-
-	body =  `{"error" : "Chirp is to long"}`
-	if len(chirp) > 140 {
-		respondWithError(w, 400, body)
+func handlerValidateChirp(w http.ResponseWriter, r *http.Request) {
+	type Chirp struct {
+		Text string `json:"body"`
 	}
-	body =  `{"valid": true}`
-	respondWithJSON(w, 200, body)
+
+	decoder := json.NewDecoder(r.Body)
+	chirp := Chirp{}
+	err := decoder.Decode(&chirp)
+	if err != nil {
+		respondWithError(w, 500, "Something went wrong")
+		return
+	}
+
+	if len(chirp.Text) > 140 {
+		respondWithError(w, 400, "Chirp is too long")
+		return
+	}
+
+	respondWithJSON(w, 200, map[string]bool{
+		"valid": true,
+	})
 }
 
-
-respondWithError(w http.ResponseWriter, code int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	w.Write([]byte(msg))
+func respondWithError(w http.ResponseWriter, code int, msg string) {
+	respondWithJSON(w, code, map[string]string{"error": msg})
 }
 
-respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
+func respondWithJSON(w http.ResponseWriter, code int, payload any) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	w.Write([]byte(msg))
+	w.Write(data)
 }
