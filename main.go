@@ -25,14 +25,14 @@ func main() {
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(".")))))
 	mux.Handle("/app/assets/logo.png", http.StripPrefix("/app/", http.FileServer(http.Dir("."))))
 
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
 
-	mux.HandleFunc("/metrics", apiCfg.getHits)
-	mux.HandleFunc("/reset", apiCfg.resetHits)
+	mux.HandleFunc("GET /admin/metrics", apiCfg.getHits)
+	mux.HandleFunc("POST /admin/reset", apiCfg.resetHits)
 
 	server.ListenAndServe()
 }
@@ -45,9 +45,10 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 }
 
 func (api *apiConfig) getHits(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("Content-Type", "text/html")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(fmt.Sprintf("Hits: %d", api.fileserverHits.Load())))
+	msg := fmt.Sprintf("<html><body><h1>Welcome, Chirpy Admin</h1><p>Chirpy has been visited %d times!</p></body></html>", api.fileserverHits.Load())
+	w.Write([]byte(msg))
 }
 
 func (api *apiConfig) resetHits(w http.ResponseWriter, r *http.Request) {
