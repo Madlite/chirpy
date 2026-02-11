@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync/atomic"
+	"strings"
 )
 
 type Server struct {
@@ -77,13 +78,10 @@ func handlerValidateChirp(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 400, "Chirp is too long")
 		return
 	}
-
-	if clean_msg, ok := replaceBadWords(chirp.Text); !ok {
-		respondWithJSON(w, 200, map[string]string{"cleaned_body": clean_msg})
-	}
-
-	respondWithJSON(w, 200, map[string]bool{
-		"valid": true,
+	
+	msg := replaceBadWords(chirp.Text)
+	respondWithJSON(w, 200, map[string]string{
+		"cleaned_body": msg,
 	})
 }
 
@@ -102,9 +100,18 @@ func respondWithJSON(w http.ResponseWriter, code int, payload any) {
 	w.Write(data)
 }
 
-func replaceBadWords(msg string) (string, bool) {
-	bad_words := []string{"kerfuffle", "sharbert", "fornax"}
-	// check the string and replace - strings.ToLower strings.Split strings.Join
-	clean_msg := msg
+func replaceBadWords(msg string) string {
+	bad_words := map[string]struct{}{
+		"kerfuffle":  {},
+		"sharbert": {},
+		"fornax":  {},
+	}
+	words := strings.Split(msg, " ")
+	for i, word := range words {
+		if _, ok := bad_words[strings.ToLower(word)]; ok {
+			words[i] = "****"
+		}
+	}
+	clean_msg := strings.Join(words, " ")
 	return clean_msg
 }
