@@ -1,17 +1,23 @@
 package main
 
 import _ "github.com/lib/pq"
+import "github.com/joho/godotenv"
+import "github.com/Madlite/chirpy/internal/database"
 import (
 	"encoding/json"
-	"fmt"
-	"net/http"
 	"sync/atomic"
+	"database/sql"
+	"net/http"
 	"strings"
+	"fmt"
+	"log"
+	"os"
 )
 
 type Server struct {
 	Addr string
 }
+
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
@@ -22,14 +28,15 @@ func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
 	db, err := sql.Open("postgres", dbURL)
-
-	mux := http.NewServeMux()
-	server := &http.Server{
-		Addr:    ":8080",
-		Handler: mux,
+	if err != nil {
+		log.Fatal("Error opening database %s", err)
 	}
-	apiCfg := apiConfig{}
 
+	dbQueries := database.New(db)
+	apiCfg := apiConfig{
+		db:	dbQueries,
+	}
+	mux := http.NewServeMux()
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(".")))))
 	mux.Handle("/app/assets/logo.png", http.StripPrefix("/app/", http.FileServer(http.Dir("."))))
 
@@ -43,7 +50,12 @@ func main() {
 	mux.HandleFunc("POST /admin/reset", apiCfg.resetHits)
 	mux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
 
-	server.ListenAndServe()
+	server := &http.Server{
+		Addr:    ":8080",
+		Handler: mux,
+	}
+	log.Printf("Serving on port: %s\n", server.Addr)
+	log.Fatal(server.ListenAndServe())
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
