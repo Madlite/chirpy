@@ -34,6 +34,14 @@ type User struct {
 	Email     string    `json:"email"`
 }
 
+type Chirp struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Body      string    `json:"body"`
+	UserId    uuid.UUID `json:"user_id"`
+}
+
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
@@ -59,8 +67,8 @@ func main() {
 
 	mux.HandleFunc("GET  /admin/metrics", apiCfg.getHits)
 	mux.HandleFunc("POST /admin/reset", apiCfg.handlerResetUsers)
-	mux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
 	mux.HandleFunc("POST /api/users", apiCfg.handlerCreateUser)
+	mux.HandleFunc("POST /api/chirps", apiCfg.handlerCreateChirp)
 
 	server := &http.Server{
 		Addr:    ":8080",
@@ -91,41 +99,72 @@ func (api *apiConfig) resetHits(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK"))
 }
 
-func handlerValidateChirp(w http.ResponseWriter, r *http.Request) {
-	type Chirp struct {
-		Text string `json:"body"`
+func (api *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Body   string    `json:"body"`
+		UserID uuid.UUID `json:"user_id"`
 	}
-
 	decoder := json.NewDecoder(r.Body)
-	chirp := Chirp{}
-	err := decoder.Decode(&chirp)
+	params := parameters{}
+	err := decoder.Decode(&params)
 	if err != nil {
 		respondWithError(w, 500, "Something went wrong")
 		return
 	}
 
-	if len(chirp.Text) > 140 {
+	if len(params.Body) > 140 {
 		respondWithError(w, 400, "Chirp is too long")
 		return
 	}
+	params.Body = replaceBadWords(params.Body)
 
-	msg := replaceBadWords(chirp.Text)
-	respondWithJSON(w, 200, map[string]string{
-		"cleaned_body": msg,
-	})
+	dbParams := database.CreateChirpParams{
+		Body:   params.Body,
+		UserID: params.UserID,
+	}
+	var dbChirp database.Chirp
+	dbChirp, err = api.db.CreateChirp(r.Context(), dbParams)
+	if err != nil {
+		respondWithError(w, 500, "Something went wrong in db creation")
+	}
+	responseChirp := Chirp{
+		ID:        dbChirp.ID,
+		CreatedAt: dbChirp.CreatedAt,
+		UpdatedAt: dbChirp.UpdatedAt,
+		Body:      dbChirp.Body,
+		UserId:    dbChirp.UserID,
+	}
+	respondWithJSON(w, 201, responseChirp)
 }
 
 func (api *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Email string `json:"email"`
+	}
+	type response struct {
+		User
+	}
 	decoder := json.NewDecoder(r.Body)
-	user := User{}
-	err := decoder.Decode(&user)
+	params := parameters{}
+	err := decoder.Decode(&params)
 	if err != nil {
-		respondWithError(w, 500, "Something went wrong")
+		respondWithError(w, http.StatusInternalServerError, "Couldn't decode parameters")
 		return
 	}
 
-	api.db.CreateUser(r.Context(), user.Email)
-	respondWithJSON(w, 201, user)
+	user, err := api.db.CreateUser(r.Context(), params.Email)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't create user")
+		return
+	}
+	respondWithJSON(w, http.StatusCreated, response{
+		User: User{
+			ID:        user.ID,
+			CreatedAt: user.CreatedAt,
+			UpdatedAt: user.UpdatedAt,
+			Email:     user.Email,
+		},
+	})
 }
 
 func (api *apiConfig) handlerResetUsers(w http.ResponseWriter, r *http.Request) {
