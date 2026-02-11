@@ -1,5 +1,6 @@
 package main
 
+import _ "github.com/lib/pq"
 import (
 	"encoding/json"
 	"fmt"
@@ -14,9 +15,14 @@ type Server struct {
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
+	db	 		   *database.Queries
 }
 
 func main() {
+	godotenv.Load()
+	dbURL := os.Getenv("DB_URL")
+	db, err := sql.Open("postgres", dbURL)
+
 	mux := http.NewServeMux()
 	server := &http.Server{
 		Addr:    ":8080",
