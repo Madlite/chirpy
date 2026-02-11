@@ -1,27 +1,37 @@
 package main
 
-import _ "github.com/lib/pq"
-import "github.com/joho/godotenv"
-import "github.com/Madlite/chirpy/internal/database"
 import (
-	"encoding/json"
-	"sync/atomic"
 	"database/sql"
-	"net/http"
-	"strings"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/Madlite/chirpy/internal/database"
+	"github.com/google/uuid"
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
 )
 
 type Server struct {
 	Addr string
 }
 
-
 type apiConfig struct {
 	fileserverHits atomic.Int32
-	db	 		   *database.Queries
+	db             *database.Queries
+	platform       string
+}
+
+type User struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
 }
 
 func main() {
@@ -34,7 +44,8 @@ func main() {
 
 	dbQueries := database.New(db)
 	apiCfg := apiConfig{
-		db:	dbQueries,
+		db:       dbQueries,
+		platform: os.Getenv("PLATFORM"),
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(".")))))
@@ -47,8 +58,9 @@ func main() {
 	})
 
 	mux.HandleFunc("GET  /admin/metrics", apiCfg.getHits)
-	mux.HandleFunc("POST /admin/reset", apiCfg.resetHits)
+	mux.HandleFunc("POST /admin/reset", apiCfg.handlerResetUsers)
 	mux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
+	mux.HandleFunc("POST /api/users", apiCfg.handlerCreateUser)
 
 	server := &http.Server{
 		Addr:    ":8080",
@@ -96,11 +108,33 @@ func handlerValidateChirp(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 400, "Chirp is too long")
 		return
 	}
-	
+
 	msg := replaceBadWords(chirp.Text)
 	respondWithJSON(w, 200, map[string]string{
 		"cleaned_body": msg,
 	})
+}
+
+func (api *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) {
+	decoder := json.NewDecoder(r.Body)
+	user := User{}
+	err := decoder.Decode(&user)
+	if err != nil {
+		respondWithError(w, 500, "Something went wrong")
+		return
+	}
+
+	api.db.CreateUser(r.Context(), user.Email)
+	respondWithJSON(w, 201, user)
+}
+
+func (api *apiConfig) handlerResetUsers(w http.ResponseWriter, r *http.Request) {
+	if api.platform != "dev" {
+		respondWithError(w, 403, "Not dev platform")
+	}
+	api.db.DeleteUsers(r.Context())
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
 }
 
 func respondWithError(w http.ResponseWriter, code int, msg string) {
@@ -120,9 +154,9 @@ func respondWithJSON(w http.ResponseWriter, code int, payload any) {
 
 func replaceBadWords(msg string) string {
 	bad_words := map[string]struct{}{
-		"kerfuffle":  {},
-		"sharbert": {},
-		"fornax":  {},
+		"kerfuffle": {},
+		"sharbert":  {},
+		"fornax":    {},
 	}
 	words := strings.Split(msg, " ")
 	for i, word := range words {
