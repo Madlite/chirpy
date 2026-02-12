@@ -174,6 +174,7 @@ func (api *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) 
 func (api *apiConfig) handlerResetUsers(w http.ResponseWriter, r *http.Request) {
 	if api.platform != "dev" {
 		respondWithError(w, 403, "Not dev platform")
+		return
 	}
 	api.db.DeleteUsers(r.Context())
 	w.Header().Set("Content-Type", "application/json")
@@ -186,10 +187,6 @@ func (api *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't get chirps")
 		return
 	}
-
-	type response struct {
-		Chirps []Chirp `json:"chirps"`
-	}
 	var responseChirps []Chirp
 	for _, chirp := range chirps {
 		responseChirps = append(responseChirps, Chirp{
@@ -200,35 +197,30 @@ func (api *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 			UserId:    chirp.UserID,
 		})
 	}
-	log.Printf("Got first chirps from db: %+v", responseChirps[0])
-	respondWithJSON(w, http.StatusOK, response{
-		Chirps: responseChirps,
-	})
+	respondWithJSON(w, http.StatusOK, responseChirps)
 }
 
 func (api *apiConfig) handlerGetChirp(w http.ResponseWriter, r *http.Request) {
-	chirpID := r.PathValue("chirpID")
+	chirpID, err := uuid.Parse(r.PathValue("chirpID"))
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error with ID")
+		return
+	}
 	chirp, err := api.db.GetChirp(r.Context(), chirpID)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't get chirp")
+		respondWithError(w, 404, "Couldn't get chirp")
 		return
 	}
 
-	type response struct {
-		Chirp Chirp `json:"chirp"`
-	}
-	var responseChirps []Chirp
+	var responseChirps Chirp
 	responseChirps = Chirp{
-			ID:        chirp.ID,
-			CreatedAt: chirp.CreatedAt,
-			UpdatedAt: chirp.UpdatedAt,
-			Body:      chirp.Body,
-			UserId:    chirp.UserID,
-		}
-	log.Printf("Got chirp from db: %+v", responseChirps)
-	respondWithJSON(w, http.StatusOK, response{
-		Chirps: responseChirps,
-	})
+		ID:        chirp.ID,
+		CreatedAt: chirp.CreatedAt,
+		UpdatedAt: chirp.UpdatedAt,
+		Body:      chirp.Body,
+		UserId:    chirp.UserID,
+	}
+	respondWithJSON(w, http.StatusOK, responseChirps)
 }
 
 func respondWithError(w http.ResponseWriter, code int, msg string) {
