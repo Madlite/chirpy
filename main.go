@@ -66,9 +66,10 @@ func main() {
 	})
 
 	mux.HandleFunc("GET  /admin/metrics", apiCfg.getHits)
-	mux.HandleFunc("GET  /api/chirps", apiCfg.handlerGetChirps)
 	mux.HandleFunc("POST /admin/reset", apiCfg.handlerResetUsers)
 	mux.HandleFunc("POST /api/users", apiCfg.handlerCreateUser)
+	mux.HandleFunc("GET  /api/chirps", apiCfg.handlerGetChirps)
+	mux.HandleFunc("GET  /api/chirps/{chirpID}", apiCfg.handlerGetChirp)
 	mux.HandleFunc("POST /api/chirps", apiCfg.handlerCreateChirp)
 
 	server := &http.Server{
@@ -200,6 +201,30 @@ func (api *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	log.Printf("Got first chirps from db: %+v", responseChirps[0])
+	respondWithJSON(w, http.StatusOK, response{
+		Chirps: responseChirps,
+	})
+}
+
+func (api *apiConfig) handlerGetChirp(w http.ResponseWriter, r *http.Request, chirpID uuid.UUID) {
+	chirp, err := api.db.GetChirp(r.Context(), chirpID)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't get chirp")
+		return
+	}
+
+	type response struct {
+		Chirp Chirp `json:"chirp"`
+	}
+	var responseChirps []Chirp
+	responseChirps = Chirp{
+			ID:        chirp.ID,
+			CreatedAt: chirp.CreatedAt,
+			UpdatedAt: chirp.UpdatedAt,
+			Body:      chirp.Body,
+			UserId:    chirp.UserID,
+		}
+	log.Printf("Got chirp from db: %+v", responseChirps)
 	respondWithJSON(w, http.StatusOK, response{
 		Chirps: responseChirps,
 	})
