@@ -66,6 +66,7 @@ func main() {
 	})
 
 	mux.HandleFunc("GET  /admin/metrics", apiCfg.getHits)
+	mux.HandleFunc("GET  /api/chirps", apiCfg.handlerGetChirps)
 	mux.HandleFunc("POST /admin/reset", apiCfg.handlerResetUsers)
 	mux.HandleFunc("POST /api/users", apiCfg.handlerCreateUser)
 	mux.HandleFunc("POST /api/chirps", apiCfg.handlerCreateChirp)
@@ -125,7 +126,9 @@ func (api *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request)
 	var dbChirp database.Chirp
 	dbChirp, err = api.db.CreateChirp(r.Context(), dbParams)
 	if err != nil {
+		log.Printf("Error creating chirp: %v", err)
 		respondWithError(w, 500, "Something went wrong in db creation")
+		return
 	}
 	responseChirp := Chirp{
 		ID:        dbChirp.ID,
@@ -174,6 +177,32 @@ func (api *apiConfig) handlerResetUsers(w http.ResponseWriter, r *http.Request) 
 	api.db.DeleteUsers(r.Context())
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
+}
+
+func (api *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
+	chirps, err := api.db.GetChirps(r.Context())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't get chirps")
+		return
+	}
+
+	type response struct {
+		Chirps []Chirp `json:"chirps"`
+	}
+	var responseChirps []Chirp
+	for _, chirp := range chirps {
+		responseChirps = append(responseChirps, Chirp{
+			ID:        chirp.ID,
+			CreatedAt: chirp.CreatedAt,
+			UpdatedAt: chirp.UpdatedAt,
+			Body:      chirp.Body,
+			UserId:    chirp.UserID,
+		})
+	}
+	log.Printf("Got first chirps from db: %+v", responseChirps[0])
+	respondWithJSON(w, http.StatusOK, response{
+		Chirps: responseChirps,
+	})
 }
 
 func respondWithError(w http.ResponseWriter, code int, msg string) {
