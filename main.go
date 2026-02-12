@@ -206,7 +206,8 @@ func (api *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (api *apiConfig) handlerGetChirp(w http.ResponseWriter, r *http.Request, chirpID uuid.UUID) {
+func (api *apiConfig) handlerGetChirp(w http.ResponseWriter, r *http.Request) {
+	chirpID := r.PathValue("chirpID")
 	chirp, err := api.db.GetChirp(r.Context(), chirpID)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't get chirp")
