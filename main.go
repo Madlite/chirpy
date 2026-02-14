@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Madlite/chirpy/internal/auth"
 	"github.com/Madlite/chirpy/internal/database"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
@@ -25,6 +26,7 @@ type apiConfig struct {
 	fileserverHits atomic.Int32
 	db             *database.Queries
 	platform       string
+	jwtSecret      string
 }
 
 type User struct {
@@ -32,6 +34,7 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email     string    `json:"email"`
+	Token     string    `json:"token"`
 }
 
 type Chirp struct {
@@ -47,13 +50,14 @@ func main() {
 	dbURL := os.Getenv("DB_URL")
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
-		log.Fatal("Error opening database %s", err)
+		log.Fatalf("Error opening database: %s", err)
 	}
 
 	dbQueries := database.New(db)
 	apiCfg := apiConfig{
-		db:       dbQueries,
-		platform: os.Getenv("PLATFORM"),
+		db:        dbQueries,
+		platform:  os.Getenv("PLATFORM"),
+		jwtSecret: os.Getenv("JWT_SECRET"),
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(".")))))
@@ -68,6 +72,7 @@ func main() {
 	mux.HandleFunc("GET  /admin/metrics", apiCfg.getHits)
 	mux.HandleFunc("POST /admin/reset", apiCfg.handlerResetUsers)
 	mux.HandleFunc("POST /api/users", apiCfg.handlerCreateUser)
+	mux.HandleFunc("POST /api/login", apiCfg.handlerLoginUser)
 	mux.HandleFunc("GET  /api/chirps", apiCfg.handlerGetChirps)
 	mux.HandleFunc("GET  /api/chirps/{chirpID}", apiCfg.handlerGetChirp)
 	mux.HandleFunc("POST /api/chirps", apiCfg.handlerCreateChirp)
@@ -120,6 +125,16 @@ func (api *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request)
 	}
 	params.Body = replaceBadWords(params.Body)
 
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, 401, "Error getting bearer token")
+	}
+	id, err := auth.ValidateJWT(token, api.jwtSecret)
+	if err != nil {
+		respondWithError(w, 401, "Error validating token")
+	}
+	params.UserID = id
+
 	dbParams := database.CreateChirpParams{
 		Body:   params.Body,
 		UserID: params.UserID,
@@ -143,7 +158,8 @@ func (api *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request)
 
 func (api *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
-		Email string `json:"email"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 	type response struct {
 		User
@@ -156,7 +172,17 @@ func (api *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	user, err := api.db.CreateUser(r.Context(), params.Email)
+	hash, err := auth.HashPassword(params.Password)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't hash password")
+		return
+	}
+
+	dbParams := database.CreateUserParams{
+		Email:          params.Email,
+		HashedPassword: hash,
+	}
+	user, err := api.db.CreateUser(r.Context(), dbParams)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't create user")
 		return
@@ -221,6 +247,45 @@ func (api *apiConfig) handlerGetChirp(w http.ResponseWriter, r *http.Request) {
 		UserId:    chirp.UserID,
 	}
 	respondWithJSON(w, http.StatusOK, responseChirps)
+}
+func (api *apiConfig) handlerLoginUser(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Email     string `json:"email"`
+		Password  string `json:"password"`
+		ExpiresAt int    `json:"expires_in_seconds"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't decode parameters")
+		return
+	}
+
+	if params.ExpiresAt == 0 || params.ExpiresAt > 3600 {
+		params.ExpiresAt = 3600
+	}
+
+	user, err := api.db.GetUser(r.Context(), params.Email)
+	password_valid, err := auth.CheckPasswordHash(params.Password, user.HashedPassword)
+	if !password_valid {
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+	type response struct {
+		User
+	}
+	token, err := auth.MakeJWT(user.ID, api.jwtSecret, time.Duration(params.ExpiresAt)*time.Second)
+	respondWithJSON(w, http.StatusOK, response{
+		User: User{
+			ID:        user.ID,
+			CreatedAt: user.CreatedAt,
+			UpdatedAt: user.UpdatedAt,
+			Email:     user.Email,
+			Token:     token,
+		},
+	})
 }
 
 func respondWithError(w http.ResponseWriter, code int, msg string) {
