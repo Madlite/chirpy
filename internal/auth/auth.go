@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"strings"
@@ -21,10 +23,10 @@ func CheckPasswordHash(password, hash string) (bool, error) {
 	return check, err
 }
 
-func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (string, error) {
+func MakeJWT(userID uuid.UUID, tokenSecret string) (string, error) {
 	claims := jwt.RegisteredClaims{
 		Subject:   userID.String(),
-		ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiresIn)),
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		IssuedAt:  jwt.NewNumericDate(time.Now()),
 		Issuer:    "chirpy-access",
 	}
@@ -62,4 +64,11 @@ func GetBearerToken(headers http.Header) (string, error) {
 		return "", errors.New("authorization header format must be Bearer {token}")
 	}
 	return parts[1], nil
+}
+
+func MakeRefreshToken() (string, error) {
+	key := make([]byte, 32)
+	rand.Read(key)
+	encodedStr := hex.EncodeToString(key)
+	return encodedStr, nil
 }

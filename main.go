@@ -30,11 +30,12 @@ type apiConfig struct {
 }
 
 type User struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
-	Token     string    `json:"token"`
+	ID           uuid.UUID `json:"id"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Email        string    `json:"email"`
+	Token        string    `json:"token"`
+	RefreshToken string    `json:"refresh_token"`
 }
 
 type Chirp struct {
@@ -76,7 +77,9 @@ func main() {
 	mux.HandleFunc("GET  /api/chirps", apiCfg.handlerGetChirps)
 	mux.HandleFunc("GET  /api/chirps/{chirpID}", apiCfg.handlerGetChirp)
 	mux.HandleFunc("POST /api/chirps", apiCfg.handlerCreateChirp)
-
+	mux.HandleFunc("POST /api/refresh", apiCfg.handlerRefreshToken)
+	mux.HandleFunc("POST /api/revoke", apiCfg.handlerRevokeRefreashToken)
+	mux.HandleFunc("PUT /api/users", apiCfg.handlerUpdateUser)
 	server := &http.Server{
 		Addr:    ":8080",
 		Handler: mux,
@@ -115,26 +118,28 @@ func (api *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request)
 	params := parameters{}
 	err := decoder.Decode(&params)
 	if err != nil {
-		respondWithError(w, 500, "Something went wrong")
+		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
 		return
 	}
 
 	if len(params.Body) > 140 {
-		respondWithError(w, 400, "Chirp is too long")
+		respondWithError(w, http.StatusBadRequest, "Chirp is too long")
 		return
 	}
 	params.Body = replaceBadWords(params.Body)
 
 	token, err := auth.GetBearerToken(r.Header)
 	if err != nil {
-		respondWithError(w, 401, "Error getting bearer token")
+		respondWithError(w, http.StatusUnauthorized, "Error getting bearer token")
+		return
 	}
 	id, err := auth.ValidateJWT(token, api.jwtSecret)
 	if err != nil {
-		respondWithError(w, 401, "Error validating token")
+		respondWithError(w, http.StatusUnauthorized, "Error validating token")
+		return
 	}
-	params.UserID = id
 
+	params.UserID = id
 	dbParams := database.CreateChirpParams{
 		Body:   params.Body,
 		UserID: params.UserID,
@@ -143,7 +148,7 @@ func (api *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request)
 	dbChirp, err = api.db.CreateChirp(r.Context(), dbParams)
 	if err != nil {
 		log.Printf("Error creating chirp: %v", err)
-		respondWithError(w, 500, "Something went wrong in db creation")
+		respondWithError(w, http.StatusInternalServerError, "Something went wrong in db creation")
 		return
 	}
 	responseChirp := Chirp{
@@ -153,7 +158,7 @@ func (api *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request)
 		Body:      dbChirp.Body,
 		UserId:    dbChirp.UserID,
 	}
-	respondWithJSON(w, 201, responseChirp)
+	respondWithJSON(w, http.StatusCreated, responseChirp)
 }
 
 func (api *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) {
@@ -199,12 +204,12 @@ func (api *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) 
 
 func (api *apiConfig) handlerResetUsers(w http.ResponseWriter, r *http.Request) {
 	if api.platform != "dev" {
-		respondWithError(w, 403, "Not dev platform")
+		respondWithError(w, http.StatusForbidden, "Not dev platform")
 		return
 	}
 	api.db.DeleteUsers(r.Context())
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
+	w.WriteHeader(http.StatusOK)
 }
 
 func (api *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
@@ -234,7 +239,7 @@ func (api *apiConfig) handlerGetChirp(w http.ResponseWriter, r *http.Request) {
 	}
 	chirp, err := api.db.GetChirp(r.Context(), chirpID)
 	if err != nil {
-		respondWithError(w, 404, "Couldn't get chirp")
+		respondWithError(w, http.StatusNotFound, "Couldn't get chirp")
 		return
 	}
 
@@ -250,9 +255,8 @@ func (api *apiConfig) handlerGetChirp(w http.ResponseWriter, r *http.Request) {
 }
 func (api *apiConfig) handlerLoginUser(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
-		Email     string `json:"email"`
-		Password  string `json:"password"`
-		ExpiresAt int    `json:"expires_in_seconds"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
@@ -263,29 +267,99 @@ func (api *apiConfig) handlerLoginUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if params.ExpiresAt == 0 || params.ExpiresAt > 3600 {
-		params.ExpiresAt = 3600
-	}
-
 	user, err := api.db.GetUser(r.Context(), params.Email)
 	password_valid, err := auth.CheckPasswordHash(params.Password, user.HashedPassword)
 	if !password_valid {
-		respondWithError(w, 401, "Unauthorized")
+		respondWithError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
+
+	refresh_token, err := auth.MakeRefreshToken()
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't create refresh token")
+		return
+	}
+	var dbRefreshToken = database.CreateRefreshTokenParams{
+		Token:  refresh_token,
+		UserID: user.ID,
+	}
+	_, err = api.db.CreateRefreshToken(r.Context(), dbRefreshToken)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't create refresh_token db entry")
+		return
+	}
+
+	token, err := auth.MakeJWT(user.ID, api.jwtSecret)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't create JWT token")
+		return
+	}
+
 	type response struct {
 		User
 	}
-	token, err := auth.MakeJWT(user.ID, api.jwtSecret, time.Duration(params.ExpiresAt)*time.Second)
 	respondWithJSON(w, http.StatusOK, response{
 		User: User{
-			ID:        user.ID,
-			CreatedAt: user.CreatedAt,
-			UpdatedAt: user.UpdatedAt,
-			Email:     user.Email,
-			Token:     token,
+			ID:           user.ID,
+			CreatedAt:    user.CreatedAt,
+			UpdatedAt:    user.UpdatedAt,
+			Email:        user.Email,
+			Token:        token,
+			RefreshToken: refresh_token,
 		},
 	})
+}
+
+func (api *apiConfig) handlerRefreshToken(w http.ResponseWriter, r *http.Request) {
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "No autherization bearere token")
+		return
+	}
+	dbRefreshToken, err := api.db.GetRefreshToken(r.Context(), token)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Refresh token not in database")
+		return
+	}
+	if time.Now().After(dbRefreshToken.ExpiresAt) {
+		respondWithError(w, http.StatusUnauthorized, "Refresh token expired")
+		return
+	}
+	if dbRefreshToken.RevokedAt.Valid {
+		respondWithError(w, http.StatusUnauthorized, "Token is revoked")
+		return
+	}
+	user, err := api.db.GetUserFromRefreshToken(r.Context(), dbRefreshToken.Token)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Could not fetch user from refresh token")
+		return
+	}
+	jwt_token, err := auth.MakeJWT(user.ID, api.jwtSecret)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Couldn't create JWT token")
+		return
+	}
+	type response struct {
+		Token string `json:"token"`
+	}
+	respondWithJSON(w, http.StatusOK, response{
+		Token: jwt_token,
+	})
+}
+
+func (api *apiConfig) handlerRevokeRefreashToken(w http.ResponseWriter, r *http.Request) {
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "No autherization bearere token")
+		return
+	}
+	err = api.db.PostRevokeRefreshToken(r.Context(), token)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Unauthorizewd to revoke refresh token")
+		return
+	}
+
+	respondWithJSON(w, http.StatusNoContent, "")
 }
 
 func respondWithError(w http.ResponseWriter, code int, msg string) {
@@ -296,7 +370,6 @@ func respondWithJSON(w http.ResponseWriter, code int, payload any) {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
