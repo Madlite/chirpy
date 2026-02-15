@@ -47,11 +47,14 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 	}
 
 	token_id, err := token.Claims.GetSubject()
+	if err != nil {
+		return uuid.Nil, err
+	}
 	id, err := uuid.Parse(token_id)
 	if err != nil {
 		return uuid.Nil, err
 	}
-	return id, err
+	return id, nil
 }
 
 func GetBearerToken(headers http.Header) (string, error) {

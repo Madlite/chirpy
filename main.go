@@ -80,6 +80,8 @@ func main() {
 	mux.HandleFunc("POST /api/refresh", apiCfg.handlerRefreshToken)
 	mux.HandleFunc("POST /api/revoke", apiCfg.handlerRevokeRefreashToken)
 	mux.HandleFunc("PUT /api/users", apiCfg.handlerUpdateUser)
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.handlerDeleteChirp)
+
 	server := &http.Server{
 		Addr:    ":8080",
 		Handler: mux,
@@ -133,13 +135,13 @@ func (api *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusUnauthorized, "Error getting bearer token")
 		return
 	}
-	id, err := auth.ValidateJWT(token, api.jwtSecret)
+	userID, err := auth.ValidateJWT(token, api.jwtSecret)
 	if err != nil {
 		respondWithError(w, http.StatusUnauthorized, "Error validating token")
 		return
 	}
 
-	params.UserID = id
+	params.UserID = userID
 	dbParams := database.CreateChirpParams{
 		Body:   params.Body,
 		UserID: params.UserID,
@@ -166,9 +168,6 @@ func (api *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) 
 		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
-	type response struct {
-		User
-	}
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
 	err := decoder.Decode(&params)
@@ -191,6 +190,9 @@ func (api *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't create user")
 		return
+	}
+	type response struct {
+		User
 	}
 	respondWithJSON(w, http.StatusCreated, response{
 		User: User{
@@ -268,6 +270,10 @@ func (api *apiConfig) handlerLoginUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, err := api.db.GetUser(r.Context(), params.Email)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error getting user from database")
+		return
+	}
 	password_valid, err := auth.CheckPasswordHash(params.Password, user.HashedPassword)
 	if !password_valid {
 		respondWithError(w, http.StatusUnauthorized, "Unauthorized")
@@ -360,6 +366,83 @@ func (api *apiConfig) handlerRevokeRefreashToken(w http.ResponseWriter, r *http.
 	}
 
 	respondWithJSON(w, http.StatusNoContent, "")
+}
+
+func (api *apiConfig) handlerUpdateUser(w http.ResponseWriter, r *http.Request) {
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Error getting bearer token")
+		return
+	}
+	userID, err := auth.ValidateJWT(token, api.jwtSecret)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Error validating token")
+		return
+	}
+	type parameters struct {
+		Password string `json:"password"`
+		Email    string `json:"email"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err = decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+		return
+	}
+	hashed_password, err := auth.HashPassword(params.Password)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error hashing password")
+	}
+	err = api.db.UpdateUserEmail(r.Context(), database.UpdateUserEmailParams{
+		ID:    userID,
+		Email: params.Email,
+	})
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error updating user email")
+	}
+	err = api.db.UpdateUserPassword(r.Context(), database.UpdateUserPasswordParams{
+		ID:             userID,
+		HashedPassword: hashed_password,
+	})
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error updating user password")
+	}
+
+	user, err := api.db.GetUser(r.Context(), params.Email)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error getting user from database")
+		return
+	}
+	type response struct {
+		User
+	}
+	respondWithJSON(w, http.StatusOK, response{
+		User: User{
+			ID:        user.ID,
+			CreatedAt: user.CreatedAt,
+			UpdatedAt: user.UpdatedAt,
+			Email:     user.Email,
+		},
+	})
+}
+
+func (api *apiConfig) handlerDeleteChirp(w http.ResponseWriter, r *http.Request) {
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Error getting bearer token")
+		return
+	}
+	userID, err := auth.ValidateJWT(token, api.jwtSecret)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Error validating token")
+		return
+	}
+	chirpID, err := uuid.Parse(r.PathValue("chirpID"))
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error with chirp ID")
+		return
+	}
 }
 
 func respondWithError(w http.ResponseWriter, code int, msg string) {

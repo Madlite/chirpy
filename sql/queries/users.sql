@@ -13,3 +13,13 @@ RETURNING *;
 SELECT *
 FROM users
 WHERE email = $1;
+
+-- name: UpdateUserEmail :exec
+UPDATE users
+SET email = $2
+WHERE id = $1;
+
+-- name: UpdateUserPassword :exec
+UPDATE users
+SET hashed_password = $2
+WHERE id = $1;
