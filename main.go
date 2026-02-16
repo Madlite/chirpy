@@ -443,6 +443,24 @@ func (api *apiConfig) handlerDeleteChirp(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "Error with chirp ID")
 		return
 	}
+	chirp, err := api.db.GetChirp(r.Context(), chirpID)
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, "Error getting chirp from db")
+		return
+	}
+	if chirp.UserID != userID {
+		respondWithError(w, http.StatusForbidden, "Not owner of chirp")
+		return
+	}
+	err = api.db.DeleteChirp(r.Context(), database.DeleteChirpParams{
+		UserID: userID,
+		ID:     chirpID,
+	})
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, "Error deleting chirp, not in database")
+		return
+	}
+	respondWithJSON(w, http.StatusNoContent, "")
 }
 
 func respondWithError(w http.ResponseWriter, code int, msg string) {
