@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -220,6 +221,7 @@ func (api *apiConfig) handlerResetUsers(w http.ResponseWriter, r *http.Request) 
 
 func (api *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 	chirpsAuthor := r.URL.Query().Get("author_id")
+
 	var chirps []database.Chirp
 	var err error
 	if chirpsAuthor == "" {
@@ -243,6 +245,12 @@ func (api *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 			UpdatedAt: chirp.UpdatedAt,
 			Body:      chirp.Body,
 			UserId:    chirp.UserID,
+		})
+	}
+	sortOrder := r.URL.Query().Get("sort")
+	if sortOrder == "desc" {
+		sort.Slice(responseChirps, func(i, j int) bool {
+			return responseChirps[i].CreatedAt.After(responseChirps[j].CreatedAt)
 		})
 	}
 	respondWithJSON(w, http.StatusOK, responseChirps)
