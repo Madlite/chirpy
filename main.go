@@ -219,7 +219,18 @@ func (api *apiConfig) handlerResetUsers(w http.ResponseWriter, r *http.Request) 
 }
 
 func (api *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
-	chirps, err := api.db.GetChirps(r.Context())
+	chirpsAuthor := r.URL.Query().Get("author_id")
+	var chirps []database.Chirp
+	var err error
+	if chirpsAuthor == "" {
+		chirps, err = api.db.GetChirps(r.Context())
+	} else {
+		authorID, err := uuid.Parse(chirpsAuthor)
+		if err != nil {
+			respondWithError(w, http.StatusInternalServerError, "Couldn't parse authorID")
+		}
+		chirps, err = api.db.GetChirpsAuthor(r.Context(), authorID)
+	}
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't get chirps")
 		return
